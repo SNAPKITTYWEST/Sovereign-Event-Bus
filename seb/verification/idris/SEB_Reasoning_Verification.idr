@@ -131,14 +131,17 @@ verify_trace_id rs t =
 -- ============================================================================
 
 -- Reachability: can we reach `target` from `start` following parent links?
-reachable : List ReasoningTrace -> Hash256 -> Hash256 -> Bool
-reachable []        _     _      = False
-reachable (t :: ts) start target =
+-- reachable uses a fuel parameter (Nat) for totality.
+-- fuel=0 is the base case (unreachable). In practice, depth <= |knownTraces|.
+reachable : Nat -> List ReasoningTrace -> Hash256 -> Hash256 -> Bool
+reachable 0     _          _     _      = False
+reachable _     []         _     _      = False
+reachable (S k) (t :: ts)  start target =
   if eqHash t.traceId start
   then any (\p => eqHash p.parentId target
-               || reachable ts p.parentId target)
+               || reachable k ts p.parentId target)
            t.parentTraces
-  else reachable ts start target
+  else reachable (S k) ts start target
 
 export
 verify_dag : ReasoningStore -> ReasoningTrace -> Bool

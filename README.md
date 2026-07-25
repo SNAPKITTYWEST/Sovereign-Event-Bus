@@ -1,275 +1,336 @@
-# Sovereign Event Bus (SEB)
+# Sovereign Event Bus
 
-**Version:** 1.0.0  
-**Status:** Scaffold Complete  
-**Date:** 2026-07-25
+![Sovereign Event Bus architecture and implementation status](docs/assets/seb-architecture.svg)
 
-## Overview
+Sovereign Event Bus (SEB) is a multi-language reference implementation for
+deterministic event coordination, policy-gated execution, human review, and
+evidence-oriented delivery. The repository explores how an event can move from
+an explicit authority envelope to an auditable outcome across Rust, Erlang,
+Ada, Lean, and legacy enterprise adapters.
 
-The Sovereign Event Bus (SEB) is a proof-carrying event coordination system that provides deterministic, verifiable event routing with cryptographic sealing and WORM chain integration. SEB replaces traditional message brokers with a fail-closed, evidence-based architecture.
+> [!IMPORTANT]
+> SEB is under active hardening. It is not a production-ready event broker,
+> cryptographic trust boundary, WORM store, or completed formal verification.
+> The status tables below separate tested code from interfaces, prototypes, and
+> open gates.
 
-## Core Principles
+[Architecture](#architecture) | [Current status](#current-status) |
+[Evaluate the code](#evaluate-the-code) | [Repository map](#repository-map) |
+[BOB commands](#bob-commands) | [Production hardening](docs/PRODUCTION_HARDENING.md) |
+[Developer guide](docs/DEVELOPER_GUIDE.md)
 
-1. **Deterministic Routing** - All event routing is deterministic and reproducible
-2. **Cryptographic Sealing** - Every event transition produces a Blake3 + Ed25519 seal
-3. **WORM Integration** - Significant events are committed to immutable evidence chain
-4. **Bounded Execution** - All handlers execute within strict time/memory/network limits
-5. **Fail-Closed** - Deny by default, allow only with explicit proof
+## Why this repository exists
+
+SEB is organized around five engineering questions:
+
+1. Can an event carry its intent, authority, evidence, and continuation state
+   as one inspectable envelope?
+2. Can routing and policy decisions be deterministic enough to reproduce?
+3. Can native, managed, and legacy runtimes share a stable event contract?
+4. Can high-impact transitions require an explicit human decision?
+5. Can implementation evidence be connected to formal models without claiming
+   more assurance than the evidence supports?
+
+The codebase contains concrete experiments for each question. It does not yet
+compose them into one deployable service.
+
+## Current status
+
+Status recorded on 2026-07-25 from the repository's default branch.
+
+| Component | What is present | Current evidence | Open gate |
+| --- | --- | --- | --- |
+| Reasoning | Rust A2A events, traces, streaming buffers, and integration types | 18 library tests pass | The example target does not compile; transport, persistence, and real signatures are absent |
+| Universe | Rust artifact manifests, indexes, search, and a compile-verify-merge model | 15 library tests pass | The example target does not compile; gate steps inspect metadata rather than invoking tools |
+| Runtime | Erlang/OTP supervisors, agent FSM, partition manager, policy bridge, and kernel facade | Source and test modules are present | Runtime compile/test/release is not validated; the NIF and policy process are not operational |
+| Kernel | Ada interfaces, an in-memory kernel body, WAL source, and a C NIF surface | Public interfaces and test-vector scaffolding are present | No portable build; persistence is disconnected; verification and key handling contain placeholders |
+| Human review | Rust queue, audit log, and commit-gateway types | Workflow structure is present | The crate does not compile; authorization, durable storage, and gateway integration are incomplete |
+| Lean verification | Lean models and proof attempts pinned to Lean 4.7.0 | Specifications are inspectable | The default build fails and proof files contain `sorry` or simplified cryptographic models |
+| Enterprise adapters | RPG/ILE fiscal adapter, COBOL copybook, and PL/I declarations | Platform contracts and build notes are present | Not tested on IBM i or z/OS; wire layouts are not yet interoperable |
+| Contracts and codegen | Rust, TypeScript, Python, Lean, and OpenAPI templates with shell generators | Templates are versioned | Generators are copy-oriented, output assumptions differ, and no conformance suite enforces parity |
+
+The two passing Rust library suites are useful development baselines. They do
+not constitute end-to-end, security, interoperability, or production evidence.
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Event Envelope                            │
-│  (Intent + Context + Authority + Evidence + Seal)           │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Policy Gate                                │
-│  (Pre-execution verification, MIRROR KITTY governance)      │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Routing Engine                              │
-│  (Deterministic dispatch to adapters)                       │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┬─────────────┐
-        ▼             ▼             ▼             ▼
-   ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐
-   │ HolyC  │   │ Shell  │   │Browser │   │ Chain  │
-   │Adapter │   │Adapter │   │Adapter │   │Adapter │
-   └────┬───┘   └────┬───┘   └────┬───┘   └────┬───┘
-        │            │            │            │
-        └────────────┴────────────┴────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   WORM Sealer                                │
-│  (Blake3 hash + Ed25519 signature + evidence chain)         │
-└─────────────────────────────────────────────────────────────┘
+The intended event path is:
+
+```text
+producer
+   |
+   v
+event envelope
+   |
+   v
+authority and policy decision
+   |
+   v
+deterministic routing
+   |
+   +----> bounded execution adapter
+   |
+   +----> human review when policy requires it
+   |
+   v
+receipt, trace, and durable evidence
 ```
 
-## Directory Structure
+The repository implements these concerns in separate component experiments:
 
-```
-seb/
-├── contracts/              # Contract templates for codegen
-│   ├── rust.template
-│   ├── typescript.template
-│   ├── python.template
-│   ├── lean4.template
-│   └── openapi.template
-├── scripts/
-│   └── codegen/           # Code generation scripts
-│       ├── generate_all.sh
-│       ├── generate_rust.sh
-│       ├── generate_typescript.sh
-│       ├── generate_python.sh
-│       ├── generate_lean4.sh
-│       └── generate_openapi.sh
-├── kernel/                # Rust kernel implementation (placeholder)
-├── runtime/               # Runtime components (placeholder)
-├── adapters/              # Execution adapters (placeholder)
-├── clients/
-│   ├── typescript/        # TypeScript client library
-│   └── python/            # Python client library
-├── verification/
-│   └── lean4/             # Lean 4 formal verification
-├── docs/
-│   ├── spec/              # Specifications
-│   ├── adr/               # Architecture Decision Records
-│   └── api/               # API documentation
-├── GenesisConfig.toml     # Genesis configuration with manifest hash
-├── Makefile               # Build automation
-└── README.md              # This file
-```
+- `seb/contracts` defines candidate cross-language shapes.
+- `seb/kernel` explores append, chain, offset, and segment interfaces.
+- `seb/runtime` explores OTP supervision and per-agent coordination.
+- `seb/reasoning` records reasoning-oriented A2A events and trace timelines.
+- `seb/universe` indexes artifacts and models promotion gates.
+- `seb/human_touch` models review and approval objects.
+- `seb/verification/lean4` models selected invariants.
+- `seb/adapters` documents legacy platform integration.
 
-## Quick Start
+There is currently no executable that joins every box into one request path.
+The canonical wire encoding, signature input, key authority, persistence
+contract, and failure semantics must be unified before components can be
+treated as one system.
 
-### 1. Verify Scaffold
+## Evaluate the code
+
+### Prerequisite
+
+Install a Rust toolchain with Cargo. The repository has no root Cargo workspace,
+so invoke each crate through its manifest.
 
 ```bash
-cd seb
-make scaffold-verify
+git clone https://github.com/SNAPKITTYWEST/Sovereign-Event-Bus.git
+cd Sovereign-Event-Bus
+
+cargo test --manifest-path seb/reasoning/Cargo.toml --lib
+cargo test --manifest-path seb/universe/Cargo.toml --lib
 ```
 
-This checks:
-- Directory structure is complete
-- All 5 contract templates are present
-- All codegen scripts are executable
-- Documentation exists
-- Manifest hash is recorded
+Expected baseline:
 
-### 2. Generate Code
+```text
+seb/reasoning: 18 library tests pass
+seb/universe:  15 library tests pass
+```
+
+Cargo will create local `target/` directories and may create crate-level lock
+files. Build outputs are ignored by Git.
+
+Do not use a successful library-only run to infer that examples or all targets
+pass. These broader commands currently expose known integration failures:
 
 ```bash
-make codegen-all
+cargo test --manifest-path seb/reasoning/Cargo.toml --all-targets --all-features
+cargo test --manifest-path seb/universe/Cargo.toml --all-targets
+cargo test --manifest-path seb/human_touch/Cargo.toml
 ```
 
-This generates:
-- `kernel/event_envelope.rs` - Rust types and traits
-- `clients/typescript/index.ts` - TypeScript client
-- `clients/python/seb_client.py` - Python client
-- `verification/lean4/SEB.lean` - Lean 4 proofs
-- `docs/api/openapi.yaml` - OpenAPI spec
+The failures and ownership boundaries are cataloged in the
+[developer guide](docs/DEVELOPER_GUIDE.md).
 
-### 3. Compute Manifest Hash
+### Additional toolchains
+
+Install only what is needed for the component being evaluated.
+
+| Area | Required environment |
+| --- | --- |
+| Erlang runtime | Erlang/OTP and `rebar3` |
+| Lean models | `elan`/Lean and `lake`; the project pins Lean and mathlib 4.7.0 |
+| Ada kernel | GNAT/SPARK tooling, Erlang NIF headers, and the intended native crypto dependencies |
+| Code generation | Bash, GNU Make, and Python 3; optional TypeScript and YAML validators |
+| RPG adapter | IBM i with ILE RPG and DB2 objects described in the adapter guide |
+| PL/I contract | z/OS Enterprise PL/I and site-specific JCL/link configuration |
+
+Windows users should run shell tooling in a real Bash environment such as
+Git Bash, MSYS2, or WSL. The scripts assume several GNU utilities and are not
+PowerShell-native.
+
+## Repository map
+
+```text
+.
+|-- bob-shell/                    Development command wrappers
+|-- docs/
+|   |-- DEVELOPER_GUIDE.md       Build, test, and contribution workflows
+|   |-- PRODUCTION_HARDENING.md  Readiness gates and operational criteria
+|   `-- assets/                   Repository visuals
+|-- seb/
+|   |-- adapters/                RPG, copybook, and PL/I integration assets
+|   |-- contracts/               Cross-language source templates
+|   |-- human_touch/             Human-review Rust prototype
+|   |-- kernel/                  Ada kernel and C Erlang NIF prototype
+|   |-- reasoning/               Rust reasoning and trace library
+|   |-- runtime/                 Erlang/OTP runtime prototype
+|   |-- scripts/codegen/         Template expansion scripts
+|   |-- universe/                Rust artifact-universe library
+|   `-- verification/lean4/      Lean models and proof sources
+|-- BOB_OPERATIONAL_CONTRACT.md
+|-- BOB_TRUST_DEED_V1.md
+`-- LICENSE
+```
+
+Layer numbers in historical documents are not fully consistent. This README
+uses component names as the stable identifiers. References to an L0 master
+specification or Idris implementation point to work that is not present in this
+repository.
+
+## Working with the components
+
+### Reasoning
+
+The reasoning crate exposes A2A event types, trace records, streaming support,
+and integration structures from
+[`seb/reasoning/src/lib.rs`](seb/reasoning/src/lib.rs).
 
 ```bash
-make hash-manifest
+cargo build --manifest-path seb/reasoning/Cargo.toml
+cargo test --manifest-path seb/reasoning/Cargo.toml --lib
 ```
 
-Computes SHA-256 hash of all contract templates for integrity verification.
+Trace storage and event streaming are process-memory structures. The current
+signature field is not an Ed25519 implementation and must not be used as
+authentication evidence.
 
-## Contract Templates
+### Universe
 
-### 1. Rust (`contracts/rust.template`)
-- Core event envelope types
-- Policy gate trait
-- Routing engine trait
-- Execution adapter trait
-- Blake3 hashing and Ed25519 signing
+The universe crate exposes artifact manifests, an in-memory repository index,
+and a model of compile-verify-merge gates from
+[`seb/universe/src/lib.rs`](seb/universe/src/lib.rs).
 
-### 2. TypeScript (`contracts/typescript.template`)
-- Zod schemas for runtime validation
-- Branded types for type safety
-- Result type pattern
-- SEBClient for API interaction
+```bash
+cargo build --manifest-path seb/universe/Cargo.toml
+cargo test --manifest-path seb/universe/Cargo.toml --lib
+```
 
-### 3. Python (`contracts/python.template`)
-- Pydantic models with validation
-- Async/await support
-- Type hints throughout
-- SEBClient for API interaction
+Gate steps currently validate metadata and simulated outcomes; they do not run
+compilers, proof checkers, review services, or deployment systems.
 
-### 4. Lean 4 (`contracts/lean4.template`)
-- Formal specifications
-- Safety properties (fail-closed, bounded execution)
-- Cryptographic properties (seal validity)
-- MIRROR KITTY governance properties
-- Performance bounds
+### Erlang runtime
 
-### 5. OpenAPI (`contracts/openapi.template`)
-- REST API specification
-- Event submission endpoint
-- Status query endpoint
-- Health check endpoint
-- Complete schema definitions
+The intended local workflow is:
 
-## Architecture Decision Records
+```bash
+cd seb/runtime
+rebar3 compile
+rebar3 eunit
+rebar3 dialyzer
+```
 
-- [ADR-100: SEB Architecture Foundation](../ADRs/ADR-100-SEB-Architecture-Foundation.md)
-- [ADR-101: Event Schema Design](../ADRs/ADR-101-SEB-Event-Schema-Design.md)
-- [ADR-102: Routing Strategy](../ADRs/ADR-102-SEB-Routing-Strategy.md)
-- [ADR-103: Cryptographic Sealing](../ADRs/ADR-103-SEB-Cryptographic-Sealing.md)
-- [ADR-104: WORM Integration](../ADRs/ADR-104-SEB-WORM-Integration.md)
+These commands are targets to restore, not a passing baseline. The current
+source has compile issues, the test functions are not discovered by EUnit, and
+the Erlang facade does not load or match the C NIF interface.
 
-## Specifications
+### Lean verification
 
-- [SEB Event V1 Specification](docs/spec/SEB_EVENT_V1.md)
-- [Envelope Schema](docs/spec/ENVELOPE_SCHEMA.md)
-- [Routing Rules](docs/spec/ROUTING_RULES.md)
-- [Security Model](docs/spec/SECURITY_MODEL.md)
+```bash
+cd seb/verification/lean4
+lake build
+```
 
-## Governance
+The project pins Lean 4.7.0 and mathlib 4.7.0. The default proof target
+currently fails type checking, and several proof sources contain `sorry`.
+Treat all proof certificates in the tree as historical development artifacts
+until CI builds the declared theorem set with a zero-placeholder policy.
 
-SEB follows the **MIRROR KITTY Phase Mirror Governance** model:
+### Kernel and adapters
 
-1. **Be Impeccable with Your Word** - All outputs cryptographically sealed
-2. **Don't Take Anything Personally** - Verification is agent-agnostic
-3. **Don't Make Assumptions** - Evidence-based reasoning only
-4. **Always Do Your Best** - Phi-decay bounded effort (φ⁻²)
+The Ada/C kernel and IBM adapter sources do not have a portable, tested build
+entry point. Start with:
 
-See: [MIRROR KITTY Governance](../DEVFLOW-FINANCE/GOVERNANCE_FRAMEWORK.md)
+- [`seb/kernel/src/seb_kernel.ads`](seb/kernel/src/seb_kernel.ads) for the
+  intended kernel API.
+- [`seb/kernel/c/seb_kernel_nif.c`](seb/kernel/c/seb_kernel_nif.c) for the C NIF
+  registry.
+- [`seb/adapters/L4_ADAPTER_BUILD_GUIDE.md`](seb/adapters/L4_ADAPTER_BUILD_GUIDE.md)
+  for target-platform assumptions.
 
-## Performance Targets
+Do not infer binary or wire compatibility from matching field names. Current
+Ada, C test-vector, RPG, PL/I, Rust, Python, and TypeScript representations do
+not yet share one validated canonical encoding.
 
-| Metric | Target | Percentile |
-|--------|--------|------------|
-| Event Latency | <10ms | p99 |
-| Throughput | >10,000 events/sec | single-node |
-| Seal Latency | <5ms | p99 |
-| Memory per Event | <1KB | envelope-only |
+## BOB commands
 
-## Security
+`bob-shell` contains development wrappers for common repository operations.
+Invoke the scripts by filename from a Bash environment:
 
-### Threat Model
+```bash
+bash bob-shell/bob-build.sh
+bash bob-shell/bob-test.sh
+bash bob-shell/bob-audit.sh
+bash bob-shell/bob-policy.sh
+bash bob-shell/bob-proof.sh
+bash bob-shell/bob-deploy.sh
+```
 
-- **Authority Spoofing** - Mitigated by Ed25519 signature verification
-- **Replay Attacks** - Mitigated by nonce tracking and timestamp validation
-- **Resource Exhaustion** - Mitigated by rate limiting and bounded execution
-- **Injection Attacks** - Mitigated by schema validation and input sanitization
+| Command | Intended use | Important current behavior |
+| --- | --- | --- |
+| `bob-build.sh` | Dispatch component builds | Missing toolchains may be skipped; the report is not proof that every component built |
+| `bob-test.sh` | Dispatch test suites | Deterministic mode sets environment variables but does not establish reproducibility by itself |
+| `bob-audit.sh` | Produce file hashes and audit output | Requires GNU-style utilities; traversal, timestamps, and build files affect output |
+| `bob-policy.sh` | Run a Prolog policy query | May create default governance files and executes a caller-supplied query |
+| `bob-proof.sh` | Dispatch a proof backend | May create placeholder proof files; its generated certificate is not a production attestation |
+| `bob-deploy.sh` | Package build output | Validation and sealing can be disabled; packaging is not deployment authorization |
 
-### Cryptography
+These wrappers are operator conveniences, not a security boundary. Review their
+working-tree mutations and generated reports before using them in automation.
+See [`bob-shell/README.md`](bob-shell/README.md) and the
+[developer guide](docs/DEVELOPER_GUIDE.md) for details.
 
-- **Hash Function:** Blake3 (256-bit)
-- **Signature Scheme:** Ed25519
-- **Key Derivation:** HKDF-SHA256
-- **Random Source:** Quantum entropy (when available) or OS CSPRNG
+## Failure modes to design for
+
+The production plan treats the following as first-class scenarios:
+
+| Scenario | Current behavior or risk |
+| --- | --- |
+| Process crash or restart | Several stores are in memory; recovery and replay are not demonstrated |
+| Duplicate or replayed event | No shared nonce/idempotency store spans the components |
+| Policy engine unavailable | The Erlang bridge can lack a live external process |
+| Key compromise or rotation | No key authority, rotation protocol, revocation path, or historical-key policy is implemented |
+| Partial append | WAL integration, atomic commit, and recovery evidence are incomplete |
+| Partition rebalance | Current logic resets counters rather than transferring assignments |
+| Human decision timeout | Durable queueing, escalation, authorization, and exactly-once commit are incomplete |
+| Malformed or oversized envelope | A canonical encoding and cross-language conformance limits are not enforced |
+| Short or non-ASCII identifiers | Some Rust diagnostic formatting uses fixed byte slices and can panic |
+| Mixed-version deployment | There is no schema negotiation or compatibility matrix |
+
+See [Production hardening](docs/PRODUCTION_HARDENING.md) for exit criteria,
+required evidence, threat boundaries, release controls, and edge-case tests.
+
+## Security and assurance
+
+Until the hardening gates are complete:
+
+- Do not expose SEB directly to untrusted networks.
+- Do not use generated seals or certificates as legal, financial, or compliance
+  evidence.
+- Do not process secrets, regulated records, or irreversible production actions.
+- Do not rely on BOB reports as attestations without independently validating
+  their inputs and tool exits.
+- Report non-sensitive defects through GitHub issues. Do not publish an
+  undisclosed vulnerability before a private reporting channel is established.
+
+The project needs an explicit security policy, supported-version policy, and
+private disclosure route before a public production release.
 
 ## Development
 
-### Prerequisites
+The [developer guide](docs/DEVELOPER_GUIDE.md) covers:
 
-- Rust 1.70+ (for kernel development)
-- Node.js 18+ (for TypeScript client)
-- Python 3.10+ (for Python client)
-- Lean 4 (for formal verification)
-- Make (for build automation)
+- component-specific build and test commands;
+- known failures and expected outputs;
+- contract and wire-format ownership;
+- generated files and cleanup;
+- review requirements for security-sensitive changes; and
+- the evidence required to change a status in this README.
 
-### Testing
-
-```bash
-# Test contract templates
-make test-contracts
-
-# Run scaffold verification
-make scaffold-verify
-```
-
-### Cleaning
-
-```bash
-# Remove generated files
-make scaffold-clean
-```
-
-## Handoff to Implementation Agents
-
-This scaffold is ready for handoff when:
-
-- [x] All contract templates created and validated
-- [x] All codegen scripts executable
-- [x] Makefile targets functional
-- [x] GenesisConfig with manifest hash
-- [ ] ADRs written and linked
-- [ ] CI/CD workflows configured
-- [ ] Documentation complete
-- [ ] `make scaffold-verify` passes
-
-**Next Steps:**
-
-1. **Kernel Agent** - Implement `seb/kernel/` (Rust runtime)
-2. **Runtime Agent** - Implement `seb/runtime/` (execution engine)
-3. **Adapter Agent** - Implement `seb/adapters/` (execution adapters)
-4. **Verification Agent** - Complete Lean 4 proofs (zero `sorry`)
-
-## References
-
-- [SEB Master Specification](../SEB_SOVEREIGN_EVENT_BUS_MASTER_SPECIFICATION.xml)
-- [Architecture Paper](../ARCHITECTURE_PAPER_45_PAGES.md)
-- [Execution Stack](../DEVFLOW-FINANCE/EXECUTION_STACK.md)
-- [Governance Framework](../DEVFLOW-FINANCE/GOVERNANCE_FRAMEWORK.md)
+Contributions should make the smallest coherent change, include tests at the
+affected boundary, and update status claims only when a repeatable command or
+artifact supports them.
 
 ## License
 
-Proprietary - SnapKitty/Bob Sovereign AI Stack
-
----
-
-**Scaffold Agent:** Bob  
-**Generated:** 2026-07-25  
-**Manifest Hash:** `5168C5EBDFE574AE24E5B4FC14B36A79FACAC136D823911725094BF849CD0138`
+The repository is distributed under the
+[Apache License 2.0](LICENSE). Some component metadata contains older license
+labels; resolve those inconsistencies before packaging or redistributing an
+affected component.

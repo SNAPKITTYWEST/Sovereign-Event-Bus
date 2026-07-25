@@ -263,7 +263,7 @@ stopped(call, _Request, _Data) ->
 %%%===================================================================
 
 %% @doc Terminate callback
--spec terminate(term(), gen_statem:state(), #data{}) -> void().
+-spec terminate(term(), gen_statem:state(), #data{}) -> ok.
 terminate(_Reason, _State, #data{drain_timer = Timer}) ->
     case Timer of
         undefined -> ok;
@@ -297,10 +297,11 @@ commit_to_kernel(Offset) when is_integer(Offset), Offset >= 0 ->
     try
         %% Call NIF function: seb_kernel_nif:commit_offset/1
         %% Per XML spec, this commits the offset to the L0 kernel
-        case catch seb_kernel_nif:commit_offset(Offset) of
+        try seb_kernel_nif:commit_offset(Offset) of
             ok -> ok;
-            {'EXIT', Reason} -> {error, {nif_error, Reason}};
             Error -> {error, Error}
+        catch
+            _:Reason -> {error, {nif_error, Reason}}
         end
     catch
         _Type:_Reason ->

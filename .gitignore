@@ -1,61 +1,27 @@
-# Dependencies
-node_modules/
-.pnp
-.pnp.js
+# Rust and native build artifacts
+target/
+seb/human_touch/target/
+*.exe
+*.dll
+*.o
+*.a
 
-# Build outputs
-dist/
-build/
-*.local
+# Lean build and dependency cache
+seb/verification/lean4/.lake/
 
-# Environment variables
+# Environment and logs
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Logs
-logs
+.env.*
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-# Testing
-coverage/
-.nyc_output/
-
-# Temporary files
+# Temporary and editor files
 *.tmp
 *.temp
 .cache/
+.idea/
+.vscode/
+*.sw?
 
-# OS files
+# Operating-system files
 Thumbs.db
 .DS_Store
-
-# WebLLM cache (optional - comment out to cache models)
-# .cache/
-
-# Local development
-.local/
-*.local.*
-
-# Debug
-debug.log
-
-# Made with Bob

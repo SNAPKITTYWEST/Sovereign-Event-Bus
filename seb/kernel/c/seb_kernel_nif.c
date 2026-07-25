@@ -121,11 +121,12 @@ static ERL_NIF_TERM nif_append_event(ErlNifEnv* env, int argc, const ERL_NIF_TER
     uint8_t* event_hash = (uint8_t*)footer_bin.data + 32;  /* event_hash at offset 32 */
     uint8_t* signature = (uint8_t*)footer_bin.data + 64;   /* signature at offset 64 */
 
-    /* Note: Full public key registry implementation required for production.
-       Signature verification is structurally in place; public key resolution
-       is deferred to a policy layer (per Sovereign Integrity Architecture). */
-    /* TODO: Wire public_key from caller context or registry */
-    uint8_t placeholder_public_key[32] = {0};  /* Placeholder pending registry */
+    /* PARTIAL IMPLEMENTATION: Signature verification structure in place.
+       STUB: Public key resolution deferred to policy layer (Sovereign Integrity Architecture).
+       EVIDENCE: seb-kernel-monster/sovereign-context-tools/PLASMA_GATE_ANALYSIS.md
+       BLOCK: Production use requires key authority implementation.
+       DECISION: Verification deferred per Architecture pattern (Ahmad + Team 2026-06-24) */
+    uint8_t placeholder_public_key[32] = {0};  /* STUB: Pending registry implementation */
     int sig_valid = ed25519_verify(event_hash, HASH_SIZE_BYTES, signature, placeholder_public_key);
 
     if (!sig_valid) {

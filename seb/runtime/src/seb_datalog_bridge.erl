@@ -175,8 +175,8 @@ handle_info({Port, {data, Data}}, State) when Port =:= State#state.port ->
             {noreply, State}
     end;
 
-handle_info({Port, closed}, _State) when is_port(Port) ->
-    {stop, souffle_port_closed, _State};
+handle_info({Port, closed}, State) when is_port(Port) ->
+    {stop, souffle_port_closed, State};
 
 handle_info(_Info, State) ->
     {noreply, State}.

@@ -190,3 +190,59 @@ si_actor_authorized(N, R) :-
 .external ed25519_verify(pubkey: symbol, msg: symbol, sig: symbol) : bool
 .external lattice_verify(prev_hash: symbol, event_hash: symbol) : bool
 .external treasury_balance(agent: symbol, balance: unsigned) : bool
+
+
+// __ STRATUM 7: FLOATING AGENT DETECTION ____________________________________
+// Cherry-picked from exo-synchronicity/logic/datalog/reachability.dl
+//
+// A floating_agent is an actor that exists in the registry but is never
+// authorized for any target or event type.
+// This is the Datalog version of exo-synchronicity's floating_port:
+//   floating_port(p) :- bound_port(p), !reachable("sigma", p)
+// Here: floating_agent(A) :- actor(A,_), !si_authorized(A,_,_)
+//
+// Floating agents are a configuration error: they consume a partition slot
+// but can never emit or receive events. Detected at policy compile time.
+
+.decl floating_agent(a: AgentID, reason: symbol)
+.decl reachable_agent(a: AgentID)
+
+// An agent is reachable if it has at least one authorized action
+reachable_agent(A) :- si_authorized(Num, _, _), actor(Num, A).
+reachable_agent(A) :- kernel_authorize(A, _).
+
+// A floating agent exists in registry but has no authorized path
+floating_agent(A, "no_authorized_target") :-
+    actor(_, A),
+    !reachable_agent(A).
+
+// An agent is floating if their only capability is revoked
+floating_agent(A, "all_capabilities_revoked") :-
+    actor(_, A),
+    agent_status(A, "revoked").
+
+// Transitive reachability: if A can authorize B's action, A is not floating
+// (mirrors reachable(a,b) :- edge(a,b) from exo-synchronicity)
+.decl agent_edge(from_agent: AgentID, to_agent: AgentID)
+agent_edge(A, B) :-
+    kernel_authorize(A, O),
+    event_header(O, B, _, _, _, _, _).
+
+.decl agent_reachable(a: AgentID, b: AgentID)
+agent_reachable(A, B) :- agent_edge(A, B).
+agent_reachable(A, C) :- agent_reachable(A, B), agent_edge(B, C).
+
+.output floating_agent
+.output reachable_agent
+
+// __ STRATUM 8: P/NP CONVERGENCE EVENTS ____________________________________
+// (from seb_pnp_bridge.erl integration)
+
+.decl convergence_event(offset: EventID, etype: symbol, delta: float)
+.decl attack_condition(reason: symbol)
+
+attack_condition("negative_universe_sum") :-
+    convergence_event(_, "attack_detected", D),
+    D < 0.0.
+
+.output attack_condition

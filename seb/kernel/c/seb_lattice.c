@@ -17,8 +17,57 @@
 
 #include <stdint.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+static int lattice_pread(int fd, void *buf, size_t n, LONGLONG off) {
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    OVERLAPPED ov = {0};
+    ov.Offset     = (DWORD)(off & 0xFFFFFFFF);
+    ov.OffsetHigh = (DWORD)((off >> 32) & 0xFFFFFFFF);
+    DWORD got = 0;
+    if (!ReadFile(h, buf, (DWORD)n, &got, &ov)) return -1;
+    return (int)got;
+}
+static int lattice_pwrite(int fd, const void *buf, size_t n, LONGLONG off) {
+    HANDLE h = (HANDLE)_get_osfhandle(fd);
+    OVERLAPPED ov = {0};
+    ov.Offset     = (DWORD)(off & 0xFFFFFFFF);
+    ov.OffsetHigh = (DWORD)((off >> 32) & 0xFFFFFFFF);
+    DWORD wrote = 0;
+    if (!WriteFile(h, buf, (DWORD)n, &wrote, &ov)) return -1;
+    return (int)wrote;
+}
+static int lattice_fsync(int fd) {
+    return FlushFileBuffers((HANDLE)_get_osfhandle(fd)) ? 0 : -1;
+}
+static LONGLONG lattice_seek_end(int fd) {
+    LARGE_INTEGER sz = {0};
+    if (!GetFileSizeEx((HANDLE)_get_osfhandle(fd), &sz)) return -1;
+    return (LONGLONG)sz.QuadPart;
+}
+#define OPEN_FLAGS (_O_RDWR | _O_CREAT | _O_BINARY)
+#define OPEN_MODE  (_S_IREAD | _S_IWRITE)
+static int lattice_open_fd(const char *path) {
+    return _open(path, OPEN_FLAGS, OPEN_MODE);
+}
+typedef LONGLONG loff_t;
+#else
 #include <unistd.h>
 #include <fcntl.h>
+static int lattice_pread(int fd, void *buf, size_t n, off_t off)
+    { return (int)pread(fd, buf, n, off); }
+static int lattice_pwrite(int fd, const void *buf, size_t n, off_t off)
+    { return (int)pwrite(fd, buf, n, off); }
+static int lattice_fsync(int fd) { return fdatasync(fd); }
+static off_t lattice_seek_end(int fd) { return lseek(fd, 0, SEEK_END); }
+static int lattice_open_fd(const char *path)
+    { return open(path, O_RDWR | O_CREAT, 0600); }
+typedef off_t loff_t;
+#endif
 
 #define PAYLOAD_BYTES  64
 #define COMMIT_BYTES   32
@@ -121,10 +170,10 @@ typedef struct {
 } lattice;
 
 int lattice_open(lattice *L, const char *path) {
-    L->fd = open(path, O_RDWR | O_CREAT, 0600);
+    L->fd = lattice_open_fd(path);
     if (L->fd < 0) return -1;
 
-    off_t sz = lseek(L->fd, 0, SEEK_END);
+    loff_t sz = lattice_seek_end(L->fd);
     if (sz < 0) return -1;
 
     L->count = (uint64_t)(sz / RECORD_BYTES);
@@ -132,8 +181,8 @@ int lattice_open(lattice *L, const char *path) {
     if (L->count == 0) {
         memset(L->tip, 0, COMMIT_BYTES);
     } else {
-        off_t last = (off_t)((L->count - 1) * RECORD_BYTES + PAYLOAD_BYTES);
-        if (pread(L->fd, L->tip, COMMIT_BYTES, last) != COMMIT_BYTES)
+        loff_t last = (loff_t)((L->count - 1) * RECORD_BYTES + PAYLOAD_BYTES);
+        if (lattice_pread(L->fd, L->tip, COMMIT_BYTES, last) != COMMIT_BYTES)
             return -1;
     }
     return 0;
@@ -152,9 +201,9 @@ int64_t lattice_append(lattice *L, const uint8_t payload[PAYLOAD_BYTES]) {
     memcpy(record,      payload, PAYLOAD_BYTES);
     memcpy(record + 64, commit,  COMMIT_BYTES);
 
-    off_t pos = (off_t)(L->count * RECORD_BYTES);
-    if (pwrite(L->fd, record, RECORD_BYTES, pos) != RECORD_BYTES) return -1;
-    if (fdatasync(L->fd) != 0) return -1;
+    loff_t pos = (loff_t)(L->count * RECORD_BYTES);
+    if (lattice_pwrite(L->fd, record, RECORD_BYTES, pos) != RECORD_BYTES) return -1;
+    if (lattice_fsync(L->fd) != 0) return -1;
 
     memcpy(L->tip, commit, COMMIT_BYTES);
     return (int64_t)(L->count++);
@@ -167,7 +216,7 @@ int64_t lattice_verify(lattice *L) {
 
     for (uint64_t i = 0; i < L->count; i++) {
         uint8_t rec[RECORD_BYTES];
-        if (pread(L->fd, rec, RECORD_BYTES, (off_t)(i * RECORD_BYTES)) != RECORD_BYTES)
+        if (lattice_pread(L->fd, rec, RECORD_BYTES, (loff_t)(i * RECORD_BYTES)) != RECORD_BYTES)
             return -1;
 
         uint8_t in96[96];
@@ -190,7 +239,7 @@ int lattice_read(lattice *L, uint64_t idx,
                  uint8_t commit_out[COMMIT_BYTES]) {
     if (idx >= L->count) return -1;
     uint8_t rec[RECORD_BYTES];
-    if (pread(L->fd, rec, RECORD_BYTES, (off_t)(idx * RECORD_BYTES)) != RECORD_BYTES)
+    if (lattice_pread(L->fd, rec, RECORD_BYTES, (loff_t)(idx * RECORD_BYTES)) != RECORD_BYTES)
         return -1;
     if (payload_out) memcpy(payload_out, rec,      PAYLOAD_BYTES);
     if (commit_out)  memcpy(commit_out,  rec + 64, COMMIT_BYTES);

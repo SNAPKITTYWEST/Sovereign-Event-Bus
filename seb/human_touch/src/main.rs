@@ -142,7 +142,7 @@ async fn main() -> Result<()> {
 /// Interactive loop for human approval/rejection of changes
 async fn interactive_loop_blocking(
     _tx: mpsc::Sender<review_queue::PendingChange>,
-    review_queue: Arc<review_queue::ReviewQueue>,
+    review_queue: Arc<tokio::sync::Mutex<review_queue::ReviewQueue>>,
     audit_log: audit_log::AuditLog,
     reviewer_name: &str,
 ) -> Result<()> {
@@ -171,6 +171,7 @@ async fn interactive_loop_blocking(
             Some("approve") => {
                 if let Some(change_id) = parts.get(1) {
                     match review_queue
+                        .lock().await
                         .approve_change(change_id, reviewer_name, &audit_log)
                         .await
                     {
@@ -185,6 +186,7 @@ async fn interactive_loop_blocking(
                 if let (Some(change_id), Some(reason)) = (parts.get(1), parts.get(2..)) {
                     let reason_str = reason.join(" ");
                     match review_queue
+                        .lock().await
                         .reject_change(change_id, reviewer_name, &reason_str, &audit_log)
                         .await
                     {
@@ -196,7 +198,7 @@ async fn interactive_loop_blocking(
                 }
             }
             Some("status") => {
-                let status = review_queue.status();
+                let status = review_queue.lock().await.status();
                 println!(
                     "\n📊 Queue Status:\n   Total: {}\n   Pending: {}\n   Approved: {}\n   Rejected: {}\n   Committed: {}\n   Capacity: {}\n",
                     status.total, status.pending, status.approved, status.rejected, status.committed, status.capacity

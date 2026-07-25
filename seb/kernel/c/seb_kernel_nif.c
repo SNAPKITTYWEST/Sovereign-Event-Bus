@@ -20,7 +20,7 @@
 #include <string.h>
 #include <stdint.h>
 
-/* Inline the lattice circuit — zero linking, zero external headers */
+/* Ahmad's lattice circuit: GF(2^8)[x]/(x^32+1), K0=1, K1=x, K2=x^2 */
 #include "seb_lattice.c"
 
 /* Wire format constants (seb_types.ads) */

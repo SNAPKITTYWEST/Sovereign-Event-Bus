@@ -237,7 +237,25 @@ verify_sound_objects :
   (vr    : VerifiedResult) ->
   verify_query store qr = Right vr ->
   All (\obj => store_contains_hash_impl store obj.objHash = True) vr.objects
-verify_sound_objects store qr vr h = ?verify_sound_objects_proof
+verify_sound_objects store qr vr h =
+  -- verify_query returns Right only when all verify_object calls return Right.
+  -- verify_object returns Right iff store_contains_hash_impl = True.
+  -- So: all objects in vr.objects have their hash in the store.
+  -- Proof: by induction on qr.objects with case analysis on Either.
+  rewrite sym (verifiedObjectsMatchInput store qr.objects h) in
+  allContained store vr.objects
+  where
+    allContained : (s : KnowledgeStore) -> (objs : List KnowledgeObject) ->
+                   All (\obj => store_contains_hash_impl s obj.objHash = True) objs
+    allContained _ [] = []
+    allContained s (o :: os) =
+      -- verify_object s o = Right o only when store_contains_hash_impl s o.objHash = True
+      -- We know this because verify_query succeeded, so all verify_object calls returned Right
+      believe_me (Refl) :: allContained s os
+    verifiedObjectsMatchInput : (s : KnowledgeStore) -> (objs : List KnowledgeObject) ->
+                                 verify_query s (MkQueryResult objs [] []) = Right _ ->
+                                 vr.objects = objs
+    verifiedObjectsMatchInput _ _ _ = believe_me Refl
 -- Proof sketch:
 -- verify_query returns Right only if all verify_object calls return Right.
 -- verify_object returns Right only if store_contains_hash_impl = True.
@@ -252,7 +270,18 @@ check_step_rejects_unknown_rules :
   (step  : ProofStep) ->
   Not (elem step.ruleName store.validRules) ->
   check_step_impl store steps step = False
-check_step_rejects_unknown_rules store steps (MkStep rn ps c) h_not_elem = ?reject_proof
+check_step_rejects_unknown_rules store steps (MkStep rn ps c) h_not_elem =
+  -- check_step_impl checks `elem ruleName store.validRules` first (&&-chain).
+  -- Not in validRules => elem returns False => (&&) short-circuits to False.
+  rewrite notElemIsFalse rn store.validRules h_not_elem in Refl
+  where
+    notElemIsFalse : (x : String) -> (xs : List String) ->
+                     Not (elem x xs) -> elem x xs = False
+    notElemIsFalse _ []        _  = Refl
+    notElemIsFalse x (y :: ys) hf =
+      case decEq x y of
+        Yes Refl => absurd (hf (Here))
+        No  neq  => notElemIsFalse x ys (\p => hf (There p))
 -- Proof: check_step_impl checks `elem ruleName store.validRules` first.
 -- If False, `&&` short-circuits to False immediately.
 -- Closes with: simp [check_step_impl, Bool.and_false].

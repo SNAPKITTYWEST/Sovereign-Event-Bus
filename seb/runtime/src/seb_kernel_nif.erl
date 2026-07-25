@@ -1,19 +1,18 @@
 %%%-------------------------------------------------------------------
-%% @doc Sovereign Event Bus - Ada Kernel NIF Bridge
+%% @doc Sovereign Event Bus — Ada/C Kernel NIF Bridge
 %%
-%% NIF (Native Interface Function) wrapper for Ada kernel (seb_kernel.adb)
-%% Per XML L2 spec, implements:
-%%   - append_event: Append event with cryptographic verification
-%%   - commit_offset: Commit offset to WAL
-%%   - verify_chain: Verify entire event chain integrity
+%% Loads seb_kernel_nif.so (built from seb_kernel_nif.c + seb_lattice.c).
+%% Once loaded, Erlang replaces the stub bodies below with C dispatch.
 %%
-%% L0 Invariants enforced by kernel:
-%%   1. Plasma Gate: Ed25519 signature valid
-%%   2. Hash Chain: Prev_Hash == current tip hash
-%%   3. Offset Monotonic: Event offset > prior offset
-%%   4. Payload Hash: blake3(header || payload) matches footer
-%%   5. Segment Chain: Prev_Seg_Hash links to prior segment
+%% L0 Invariants enforced by the C kernel on every append_event:
+%%   1. Commitment chain: circuit(prev_tip || header64) == footer.commitment
+%%   2. Hash chain: footer.prev_commitment == tip
+%%   3. Offset monotonic: new_offset > tip_offset
+%%   4. Segment bounds: event fits in 1 GiB segment
+%%   5. Sequence monotonic on rotate
 %%
+%% Authority and signature are handled upstream by seb_datalog_bridge
+%% before events reach this module. The kernel enforces structure only.
 %% @end
 %%%-------------------------------------------------------------------
 -module(seb_kernel_nif).
@@ -22,220 +21,117 @@
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
-%% NIF API
 -export([
-    append_event/4,      %% (Header, Payload, Footer) -> {ok, Offset} | {error, Reason}
-    commit_offset/1,     %% (Offset) -> ok | {error, Reason}
-    verify_chain/0,      %% () -> {ok, Count} | {error, Reason}
-    get_tip_hash/0       %% () -> {ok, Hash} | {error, Reason}
+    init_kernel/2,       %% (SegmentId, SegmentSequence) -> {ok, Handle} | {error, Reason}
+    append_event/4,      %% (Handle, Header, Payload, Footer) -> {ok, Offset} | {error, Reason}
+    rotate_segment/3,    %% (Handle, NewSegmentId, NewSequence) -> {ok, 0} | {error, Reason}
+    verify_chain/1,      %% (Handle) -> {ok, EventsSealed} | {error, Reason}
+    commit_offset/4,     %% (Handle, AgentId, Partition, Offset) -> ok
+    get_state/1          %% (Handle) -> {SegId, Seq, Sealed, Rotated, TipOffset}
 ]).
 
 -define(SERVER, ?MODULE).
--define(NIF_LIBRARY, "libseb_kernel").
--define(NIF_LOAD_TIMEOUT, 5000).
+-define(NIF_LIB, "seb_kernel_nif").
 
--record(state, {
-    kernel_loaded :: boolean(),
-    nif_module :: atom()
-}).
+-record(state, {handle}).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%% @doc Start the NIF bridge
--spec start_link() -> gen_server:start_ret().
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%% @doc Append an event to the kernel
-%%
-%% Header: Binary containing event header (68 bytes)
-%% Payload: Binary event data
-%% Footer: Binary containing event footer (128 bytes) with signature/hash
-%%
-%% Returns: {ok, CommittedOffset} | {error, Reason}
-%%
-%% Pre-conditions checked by kernel:
-%%   1. Ed25519 signature valid on event hash
-%%   2. Prev_Hash matches current state tip hash
-%%   3. Payload size <= Max_Payload_Size
-%%
--spec append_event(binary(), binary(), binary(), binary()) -> {ok, non_neg_integer()} | {error, term()}.
-append_event(Header, Payload, Footer, PublicKey) when
-    is_binary(Header),
-    is_binary(Payload),
-    is_binary(Footer),
-    is_binary(PublicKey)
-->
-    gen_server:call(?SERVER, {append_event, Header, Payload, Footer, PublicKey}).
+-spec init_kernel(non_neg_integer(), non_neg_integer()) ->
+    {ok, reference()} | {error, term()}.
+init_kernel(SegmentId, SegmentSequence) ->
+    gen_server:call(?SERVER, {init_kernel, SegmentId, SegmentSequence}).
 
-%% @doc Commit an offset to the kernel WAL
-%%
-%% Offset: Event offset to commit (must be monotonically increasing)
-%%
-%% Returns: ok | {error, Reason}
-%%
-%% The kernel verifies:
-%%   1. Offset > previous committed offset
-%%   2. Offset corresponds to a valid event
-%%
--spec commit_offset(non_neg_integer()) -> ok | {error, term()}.
-commit_offset(Offset) when is_integer(Offset), Offset >= 0 ->
-    gen_server:call(?SERVER, {commit_offset, Offset}).
+-spec append_event(reference(), binary(), binary(), binary()) ->
+    {ok, non_neg_integer()} | {error, term()}.
+append_event(Handle, Header, Payload, Footer) ->
+    gen_server:call(?SERVER, {append_event, Handle, Header, Payload, Footer}).
 
-%% @doc Verify entire event chain integrity
-%%
-%% Traverses from tip to genesis, verifying:
-%%   1. Hash chain validity
-%%   2. Signature validity
-%%   3. Offset monotonicity
-%%
-%% Returns: {ok, VerifiedCount} | {error, Reason}
-%%
--spec verify_chain() -> {ok, non_neg_integer()} | {error, term()}.
-verify_chain() ->
-    gen_server:call(?SERVER, verify_chain).
+-spec rotate_segment(reference(), non_neg_integer(), non_neg_integer()) ->
+    {ok, 0} | {error, term()}.
+rotate_segment(Handle, NewSegmentId, NewSequence) ->
+    gen_server:call(?SERVER, {rotate_segment, Handle, NewSegmentId, NewSequence}).
 
-%% @doc Get current tip hash
-%%
-%% Returns hash of the most recent event in the chain
-%%
--spec get_tip_hash() -> {ok, binary()} | {error, term()}.
-get_tip_hash() ->
-    gen_server:call(?SERVER, get_tip_hash).
+-spec verify_chain(reference()) -> {ok, non_neg_integer()} | {error, term()}.
+verify_chain(Handle) ->
+    gen_server:call(?SERVER, {verify_chain, Handle}).
+
+-spec commit_offset(reference(), non_neg_integer(), non_neg_integer(), non_neg_integer()) -> ok.
+commit_offset(Handle, AgentId, Partition, Offset) ->
+    gen_server:call(?SERVER, {commit_offset, Handle, AgentId, Partition, Offset}).
+
+-spec get_state(reference()) ->
+    {non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()}.
+get_state(Handle) ->
+    gen_server:call(?SERVER, {get_state, Handle}).
 
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
 
-%% @doc Initialize the NIF bridge
-%%
-%% Attempts to load the native library (libseb_kernel).
-%% If loading fails, the server exits with fatal error.
-%%
--spec init([]) -> {ok, #state{}} | {stop, term()}.
 init([]) ->
-    case load_nif_library() of
+    SoPath = filename:join([code:priv_dir(seb), ?NIF_LIB]),
+    case erlang:load_nif(SoPath, []) of
         ok ->
-            State = #state{
-                kernel_loaded = true,
-                nif_module = ?MODULE
-            },
-            {ok, State};
+            {ok, Handle} = nif_init_kernel(0, 0),
+            {ok, #state{handle = Handle}};
+        {error, {reload, _}} ->
+            %% already loaded (hot-reload path)
+            {ok, Handle} = nif_init_kernel(0, 0),
+            {ok, #state{handle = Handle}};
         {error, Reason} ->
-            {stop, {nif_load_failed, Reason}}
+            {stop, {nif_load_failed, SoPath, Reason}}
     end.
 
-%% @doc Handle synchronous calls
--spec handle_call(term(), {pid(), term()}, #state{}) -> {reply, term(), #state{}}.
+handle_call({init_kernel, SegId, Seq}, _From, State) ->
+    {reply, nif_init_kernel(SegId, Seq), State};
 
-handle_call({append_event, Header, Payload, Footer, PublicKey}, _From, State) ->
-    Result = append_event_nif(Header, Payload, Footer, PublicKey),
-    {reply, Result, State};
+handle_call({append_event, Handle, Header, Payload, Footer}, _From, State) ->
+    {reply, nif_append_event(Handle, Header, Payload, Footer), State};
 
-handle_call({commit_offset, Offset}, _From, State) ->
-    Result = commit_offset_nif(Offset),
-    {reply, Result, State};
+handle_call({rotate_segment, Handle, NewId, NewSeq}, _From, State) ->
+    {reply, nif_rotate_segment(Handle, NewId, NewSeq), State};
 
-handle_call(verify_chain, _From, State) ->
-    Result = verify_chain_nif(),
-    {reply, Result, State};
+handle_call({verify_chain, Handle}, _From, State) ->
+    {reply, nif_verify_chain(Handle), State};
 
-handle_call(get_tip_hash, _From, State) ->
-    Result = get_tip_hash_nif(),
-    {reply, Result, State};
+handle_call({commit_offset, Handle, AgentId, Partition, Offset}, _From, State) ->
+    {reply, nif_commit_offset(Handle, AgentId, Partition, Offset), State};
+
+handle_call({get_state, Handle}, _From, State) ->
+    {reply, nif_get_state(Handle), State};
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_call}, State}.
 
-%% @doc Handle asynchronous casts
--spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
-handle_cast(_Msg, State) ->
-    {noreply, State}.
-
-%% @doc Handle info messages
--spec handle_info(term(), #state{}) -> {noreply, #state{}}.
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-%% @doc Terminate the NIF bridge
--spec terminate(term(), #state{}) -> ok.
-terminate(_Reason, _State) ->
-    ok.
-
-%% @doc Code change (upgrade support)
--spec code_change(term(), #state{}, term()) -> {ok, #state{}}.
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+handle_cast(_Msg, State) -> {noreply, State}.
+handle_info(_Info, State) -> {noreply, State}.
+terminate(_Reason, _State) -> ok.
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 %%%===================================================================
-%%% NIF Stub Functions (actual implementation in C)
+%%% NIF stubs — replaced by C dispatch after load_nif succeeds
 %%%===================================================================
 
-%% @doc Load the native library
-%%
-%% In a real implementation, this would call:
-%%   erl_nif:load_nif(?NIF_LIBRARY, ...)
-%%
-%% For now, returns ok (test stub)
-%%
--spec load_nif_library() -> ok | {error, term()}.
-load_nif_library() ->
-    try
-        %% Real implementation:
-        %% erlang:load_nif(filename:join([code:priv_dir(seb), ?NIF_LIBRARY]), [])
-        %% For test: return ok
-        ok
-    catch
-        _Type:_Reason ->
-            {error, nif_load_failed}
-    end.
+nif_init_kernel(_SegmentId, _SegmentSequence) ->
+    erlang:nif_error(nif_not_loaded).
 
-%% @doc NIF stub: append_event
-%%
-%% This should call into C code that:
-%%   1. Verifies Ed25519 signature
-%%   2. Checks hash chain validity
-%%   3. Appends to WAL
-%%   4. Returns committed offset
-%%
--spec append_event_nif(binary(), binary(), binary(), binary()) ->
-    {ok, non_neg_integer()} | {error, term()}.
-append_event_nif(_Header, _Payload, _Footer, _PublicKey) ->
-    %% TODO: Replace with actual NIF call
-    {error, nif_not_implemented}.
+nif_append_event(_Handle, _Header, _Payload, _Footer) ->
+    erlang:nif_error(nif_not_loaded).
 
-%% @doc NIF stub: commit_offset
-%%
-%% This should call into C code that:
-%%   1. Verifies offset monotonicity
-%%   2. Commits offset to WAL
-%%   3. Calls msync for durability
-%%
--spec commit_offset_nif(non_neg_integer()) -> ok | {error, term()}.
-commit_offset_nif(_Offset) ->
-    %% TODO: Replace with actual NIF call
-    ok.
+nif_rotate_segment(_Handle, _NewSegmentId, _NewSequence) ->
+    erlang:nif_error(nif_not_loaded).
 
-%% @doc NIF stub: verify_chain
-%%
-%% This should call into C code that:
-%%   1. Traverses event chain from tip to genesis
-%%   2. Verifies each event's signature and hash
-%%   3. Returns count of verified events
-%%
--spec verify_chain_nif() -> {ok, non_neg_integer()} | {error, term()}.
-verify_chain_nif() ->
-    %% TODO: Replace with actual NIF call
-    {error, nif_not_implemented}.
+nif_verify_chain(_Handle) ->
+    erlang:nif_error(nif_not_loaded).
 
-%% @doc NIF stub: get_tip_hash
-%%
-%% This should call into C code that:
-%%   1. Returns the hash of the most recent event
-%%
--spec get_tip_hash_nif() -> {ok, binary()} | {error, term()}.
-get_tip_hash_nif() ->
-    %% TODO: Replace with actual NIF call
-    {error, nif_not_implemented}.
+nif_commit_offset(_Handle, _AgentId, _Partition, _Offset) ->
+    erlang:nif_error(nif_not_loaded).
+
+nif_get_state(_Handle) ->
+    erlang:nif_error(nif_not_loaded).

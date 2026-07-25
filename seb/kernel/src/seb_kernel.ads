@@ -13,8 +13,6 @@
 
 pragma SPARK_Mode (On);
 
-with Ada.Types;
-use Ada.Types;
 with SEB_Types;
 use SEB_Types;
 

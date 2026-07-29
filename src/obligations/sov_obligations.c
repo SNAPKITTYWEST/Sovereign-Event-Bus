@@ -275,25 +275,25 @@ int sov_obset_to_json(ObligationSet *obset,
     if (!buf) return -1;
 
     size_t pos = 0;
-    pos += snprintf((char *)buf + pos, buf_size - pos, "{\"version\":1,\"obligations\":[");
+    pos += snprintf((char *)buf + pos, buf_size - pos, "{"version":1,"obligations":[");
 
     for (size_t i = 0; i < obset->count; i++) {
         Obligation *obl = &obset->items[i];
         if (i > 0) pos += snprintf((char *)buf + pos, buf_size - pos, ",");
 
         pos += snprintf((char *)buf + pos, buf_size - pos,
-                       "{\"id\":%u,\"kind\":%d,\"start_pc\":%u,\"end_pc\":%u,\"description\":\"",
+                       "{"id":%u,"kind":%d,"start_pc":%u,"end_pc":%u,"description":"",
                        obl->id, (int)obl->kind, obl->start_pc, obl->end_pc);
 
         for (size_t j = 0; j < obl->desc_len && pos < buf_size - 1; j++) {
             uint8_t c = (uint8_t)obl->description[j];
-            if (c == '"' || c == '\\') {
-                buf[pos++] = '\\';
+            if (c == '"' || c == '\') {
+                buf[pos++] = '\';
             }
             buf[pos++] = c;
         }
 
-        pos += snprintf((char *)buf + pos, buf_size - pos, "\"}");
+        pos += snprintf((char *)buf + pos, buf_size - pos, ""}");
     }
 
     pos += snprintf((char *)buf + pos, buf_size - pos, "]}");

@@ -6,7 +6,6 @@
 #include "sov_cert.h"
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <time.h>
 
 ProofCertificate *sov_cert_new(void)
@@ -28,8 +27,8 @@ void sov_cert_free(ProofCertificate *cert)
         free(cert->type_env);
         free(cert->evidence_chain);
         free(cert->canonical_json);
-        if (cert->obligations.items) {
-            free(cert->obligations.items);
+        if (cert->obligations.obligations) {
+            free(cert->obligations.obligations);
         }
         free(cert);
     }
@@ -76,11 +75,11 @@ int sov_cert_add_obligation(ProofCertificate *cert,
     if (cert->obligations.count >= 256) return -1;
 
     size_t new_size = (cert->obligations.count + 1) * sizeof(Obligation);
-    Obligation *new_obls = (Obligation *)realloc(cert->obligations.items, new_size);
+    Obligation *new_obls = (Obligation *)realloc(cert->obligations.obligations, new_size);
     if (!new_obls) return -1;
 
-    cert->obligations.items = new_obls;
-    Obligation *obl = &cert->obligations.items[cert->obligations.count];
+    cert->obligations.obligations = new_obls;
+    Obligation *obl = &cert->obligations.obligations[cert->obligations.count];
     memset(obl, 0, sizeof(Obligation));
     obl->id = cert->obligations.count;
     obl->kind = kind;
@@ -100,28 +99,28 @@ int sov_cert_canonicalize(ProofCertificate *cert)
     if (!buf) return -1;
 
     size_t pos = 0;
-    pos += snprintf((char *)buf + pos, buf_size - pos,
-                   "{\"version\":%u,\"timestamp\":%llu,\"program_size\":%u,\"obligations\":[",
+    pos += snprintf((char *)buf + pos, buf_size - pos, 
+                   "{"version":%u,"timestamp":%llu,"program_size":%u,"obligations":[",
                    cert->version, (unsigned long long)cert->timestamp, cert->program_size);
 
     for (size_t i = 0; i < cert->obligations.count; i++) {
-        Obligation *obl = &cert->obligations.items[i];
+        Obligation *obl = &cert->obligations.obligations[i];
         if (i > 0) pos += snprintf((char *)buf + pos, buf_size - pos, ",");
         pos += snprintf((char *)buf + pos, buf_size - pos,
-                       "{\"id\":%u,\"kind\":%d,\"start_pc\":%u,\"end_pc\":%u}",
+                       "{"id":%u,"kind":%d,"start_pc":%u,"end_pc":%u}",
                        obl->id, (int)obl->kind, obl->start_pc, obl->end_pc);
     }
 
-    pos += snprintf((char *)buf + pos, buf_size - pos, "],\"stacks\":{\"initial\":[");
-
+    pos += snprintf((char *)buf + pos, buf_size - pos, "],"stacks":{"initial":[");
+    
     for (size_t i = 0; i < cert->initial_stack_len; i++) {
         if (i > 0) pos += snprintf((char *)buf + pos, buf_size - pos, ",");
-        pos += snprintf((char *)buf + pos, buf_size - pos, "%lld",
+        pos += snprintf((char *)buf + pos, buf_size - pos, "%lld", 
                        (long long)cert->initial_stack[i]);
     }
 
-    pos += snprintf((char *)buf + pos, buf_size - pos, "],\"final\":[");
-
+    pos += snprintf((char *)buf + pos, buf_size - pos, "],"final":[");
+    
     for (size_t i = 0; i < cert->final_stack_len; i++) {
         if (i > 0) pos += snprintf((char *)buf + pos, buf_size - pos, ",");
         pos += snprintf((char *)buf + pos, buf_size - pos, "%lld",
@@ -138,13 +137,9 @@ int sov_cert_canonicalize(ProofCertificate *cert)
 
 int sov_cert_hash(ProofCertificate *cert)
 {
-    if (!cert) return -1;
+    if (!cert || !cert->canonical_json) return -1;
 
-    if (!cert->canonical_json) {
-        if (sov_cert_canonicalize(cert) != 0) return -1;
-    }
-
-    if (!cert->canonical_json) return -1;
+    if (sov_cert_canonicalize(cert) != 0) return -1;
 
     memset(cert->cert_hash, 0, 32);
     for (size_t i = 0; i < cert->canonical_json_len && i < 32; i++) {
@@ -254,7 +249,7 @@ int sov_receipt_to_json(const WormReceipt *receipt,
     if (!buf) return -1;
 
     snprintf((char *)buf, buf_size,
-            "{\"timestamp\":%llu,\"outcome\":%d}",
+            "{"timestamp":%llu,"outcome":%d}",
             (unsigned long long)receipt->timestamp,
             (int)receipt->outcome);
 

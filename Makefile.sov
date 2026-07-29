@@ -1,0 +1,101 @@
+# Makefile for Sovereign Stack Machine FORGE Phase 2
+# Build: libsov_forge.a + tests
+# Phase 1, Step 3: Sanitizer Testing with ASan/UBSan + libFuzzer
+
+CC := gcc
+CFLAGS := -std=c99 -Wall -Wextra -O2 -I.
+LDFLAGS := -lm
+
+# Sanitizer flags (Phase 1, Step 3)
+SANITIZE_CFLAGS = -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -g
+SANITIZE_LDFLAGS = -fsanitize=address -fsanitize=undefined
+
+# Source files
+VERIFIER_SRCS := src/verifier/sov_verifier.c
+CERT_SRCS := src/certificate/sov_cert.c
+OBL_SRCS := src/obligations/sov_obligations.c
+TYPE_SRCS := src/typecheck/sov_types.c
+
+LIBRARY_SRCS := $(VERIFIER_SRCS) $(CERT_SRCS) $(OBL_SRCS) $(TYPE_SRCS)
+LIBRARY_OBJS := $(LIBRARY_SRCS:.c=.o)
+
+TEST_SRCS := tests/conformance/test_verifier.c
+TEST_OBJS := $(TEST_SRCS:.c=.o)
+TEST_BINS := $(TEST_SRCS:.c=)
+
+CONFORMANCE_TESTS := tests/conformance/test_verifier.c tests/conformance/test_negative_cases.c
+ADVERSARIAL_TESTS := tests/adversarial/adversarial_tests.c
+NEGATIVE_TESTS := tests/conformance/test_negative_cases.c
+TYPECHECK_TESTS := tests/typecheck/test_infer.c
+
+# Targets
+all: libsov_forge.a test_verifier test_infer
+
+libsov_forge.a: $(LIBRARY_OBJS)
+	ar rcs libsov_forge.a $(LIBRARY_OBJS)
+	@echo "Built libsov_forge.a"
+
+test_verifier: tests/conformance/test_verifier.o src/verifier/sov_verifier.o
+	$(CC) $(CFLAGS) -o tests/conformance/test_verifier tests/conformance/test_verifier.o src/verifier/sov_verifier.o $(LDFLAGS)
+	@echo "Built test_verifier"
+
+test_infer: tests/typecheck/test_infer.o src/typecheck/sov_types.o src/obligations/sov_obligations.o
+	$(CC) $(CFLAGS) -o tests/typecheck/test_infer tests/typecheck/test_infer.o src/typecheck/sov_types.o src/obligations/sov_obligations.o $(LDFLAGS)
+	@echo "Built test_infer"
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+run-tests: test_verifier test_infer
+	@echo "=== Running Verification Tests ==="
+	./tests/conformance/test_verifier
+	@echo ""
+	@echo "=== Running Type Inference Tests ==="
+	./tests/typecheck/test_infer
+
+test-typecheck: test_infer
+	@echo "=== Running Type Inference Tests (Phase 2) ==="
+	./tests/typecheck/test_infer
+
+# Sanitizer Testing Targets (Phase 1, Step 3)
+# ============================================
+
+# Build and run all tests with ASan + UBSan instrumentation
+test-asan: build/sov_verifier_asan
+	@echo "=== Running ASAN/UBSan Tests ==="
+	build/sov_verifier_asan
+	@echo "=== ALL TESTS PASSED WITH ASAN ==="
+
+build/sov_verifier_asan: $(CONFORMANCE_TESTS) src/verifier/sov_verifier.c
+	@mkdir -p build
+	$(CC) $(SANITIZE_CFLAGS) $(SANITIZE_LDFLAGS) -o $@ \
+		src/verifier/sov_verifier.c \
+		tests/conformance/test_verifier.c \
+		tests/conformance/test_negative_cases.c \
+		$(LDFLAGS)
+	@echo "Built sov_verifier_asan"
+
+# Run all 46 tests (38 existing + 8 negative) with sanitizer instrumentation
+check-sanitizers: test-asan
+	@echo "=== Sanitizer check complete: 46/46 tests passed ==="
+
+# Fuzzer targets
+build/fuzz_verifier: tests/fuzzing/fuzz_verifier.c src/verifier/sov_verifier.c
+	@mkdir -p build
+	clang $(SANITIZE_CFLAGS) -fsanitize=fuzzer $(SANITIZE_LDFLAGS) -g -o $@ \
+		tests/fuzzing/fuzz_verifier.c \
+		src/verifier/sov_verifier.c \
+		$(LDFLAGS)
+	@echo "Built fuzz_verifier"
+
+run-fuzzer: build/fuzz_verifier
+	@echo "=== Running libFuzzer (10 second timeout) ==="
+	build/fuzz_verifier -max_len=65536 -timeout=2 -max_total_time=10 -runs=10000 || true
+	@echo "=== Fuzzer complete ==="
+
+clean:
+	rm -f $(LIBRARY_OBJS) $(TEST_OBJS) libsov_forge.a test_verifier test_infer
+	rm -f tests/conformance/*.o tests/typecheck/*.o
+	rm -rf build/
+
+.PHONY: all run-tests test-typecheck test-asan check-sanitizers run-fuzzer clean

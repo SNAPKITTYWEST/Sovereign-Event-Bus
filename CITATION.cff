@@ -1,0 +1,119 @@
+cff-version: 1.2.0
+title: Sovereign Forge
+subtitle: Deterministic Proof Verification for Exact Linear Algebra
+abstract: >-
+  Sovereign Forge is a production-ready system for cryptographically verifying
+  the correctness of linear algebra computations. It provides a five-layer
+  architecture: kernel hardening (memory safety), typed execution (precondition
+  checking), proof artifacts (cryptographic binding), provenance tracking
+  (WORM-sealed ledger), and formal refinement proofs (Lean 4).
+
+  All computations use exact rational arithmetic, eliminating floating-point
+  rounding errors. Proof certificates are deterministic, reproducible, and
+  tamper-resistant using Blake3/Ed25519 cryptography.
+
+type: software
+
+authors:
+  - family-names: Parr
+    given-names: Ahmad Ali
+    affiliation: Sovereign Kernel Initiative
+    note: Architecture and threat modeling
+  - family-names: Westerhoff
+    given-names: Jessica
+    affiliation: Sovereign Kernel Initiative
+    note: Implementation and coordination
+  - family-names: Haiku
+    given-names: Claude
+    affiliation: Anthropic
+    note: Formal verification and development
+
+contact:
+  - family-names: Westerhoff
+    given-names: Jessica
+    email: jessicalw34@gmail.com
+    url: https://github.com/SNAPKITTYWEST
+
+repository-code: https://github.com/SNAPKITTYWEST/bobs-control-repo
+url: https://sovereign-forge.dev
+
+license: Apache-2.0
+
+keywords:
+  - verification
+  - proof-certificates
+  - formal-methods
+  - linear-algebra
+  - exact-arithmetic
+  - deterministic
+  - cryptography
+  - lean4
+  - security
+
+topic:
+  - cryptography
+  - formal-verification
+  - software-security
+  - mathematical-computing
+
+version: 1.0.0
+date-released: 2026-07-29
+
+references:
+  - type: article
+    authors:
+      - family-names: Parr
+        given-names: Ahmad Ali
+      - family-names: Westerhoff
+        given-names: Jessica
+    title: >-
+      Sovereign Forge: Deterministic Verification for Exact Computations
+    year: 2026
+    journal: Technical Report
+    volume: 1
+    issue: 0
+    pages: 1-47
+    url: https://github.com/SNAPKITTYWEST/bobs-control-repo/blob/main/docs/ARCHITECTURE.md
+
+  - type: standard
+    title: RFC 8032 Edwards-Curve Digital Signature Algorithm (EdDSA)
+    year: 2017
+    url: https://tools.ietf.org/html/rfc8032
+
+  - type: standard
+    title: NIST SP 800-38D Recommendation for Block Cipher Modes of Operation
+    year: 2007
+    url: https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf
+
+  - type: book
+    authors:
+      - family-names: Lean
+        given-names: Foundation
+    title: The Lean 4 Reference Manual
+    year: 2023
+    url: https://lean-lang.org/
+
+  - type: article
+    authors:
+      - family-names: Shewchuk
+        given-names: Jonathan Richard
+    title: >-
+      Robust Adaptive Floating-Point Geometric Predicates
+    year: 1997
+    journal: Proceedings of 13th Annual ACM Symposium on Computational Geometry
+    pages: 141-150
+
+preferred-citation:
+  type: software
+  authors:
+    - family-names: Parr
+      given-names: Ahmad Ali
+    - family-names: Westerhoff
+      given-names: Jessica
+    - family-names: Haiku
+      given-names: Claude
+  title: Sovereign Forge
+  version: 1.0.0
+  date-released: 2026-07-29
+  url: https://github.com/SNAPKITTYWEST/bobs-control-repo
+  repository-code: https://github.com/SNAPKITTYWEST/bobs-control-repo
